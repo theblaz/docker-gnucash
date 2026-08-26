@@ -1,0 +1,15 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//var/run/**)",
+      "Read(//snap/**)",
+      "Bash(dpkg -l)",
+      "Bash(sudo -n true)",
+      "Bash(command -v apt apt-get)",
+      "Read(//usr/lib/**)",
+      "Bash(curl -sI --max-time 5 https://download.docker.com)",
+      "Bash(docker version *)",
+      "Bash(docker run *)"
+    ]
+  }
+}
