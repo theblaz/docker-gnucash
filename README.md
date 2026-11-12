@@ -32,6 +32,7 @@ services:
       - TZ=Etc/UTC
       - PASSWORD= #optional
       - CLI_ARGS= #optional, e.g. path to a .gnucash file to open on startup
+      - FILE_MANAGER_PATH=/config/Documents #optional, folder used by the Files panel for uploads and downloads
     volumes:
       - /path/to/gnucash/config:/config
     ports:
@@ -52,6 +53,7 @@ docker run -d \
   -e TZ=Etc/UTC \
   -e PASSWORD= `#optional` \
   -e CLI_ARGS= `#optional` \
+  -e FILE_MANAGER_PATH=/config/Documents `#optional` \
   -p 8080:8080 \
   -p 8181:8181 \
   -v /path/to/gnucash/config:/config \
@@ -73,11 +75,27 @@ Once running, open `https://yourhost:8181/` — GnuCash will already be open and
 | `-e TZ=Etc/UTC` | timezone, see this [list](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones#List) |
 | `-e PASSWORD=` | optional HTTP basic auth password for the `abc` user |
 | `-e CLI_ARGS=` | optional args passed straight to `gnucash`, e.g. a file path to open a book on startup |
+| `-e FILE_MANAGER_PATH=` | optional folder the Files panel uploads to and downloads from — see [File uploads and downloads](#file-uploads-and-downloads). Defaults to `/config/Desktop` |
 | `-v /config` | persistent home directory — GnuCash preferences live in `/config/.config/gnucash`; **save your book files somewhere under `/config`** (e.g. `/config/Documents`) so they survive container recreation |
 | `--shm-size=` | recommended for all desktop/selkies-based images |
 | `--security-opt seccomp=unconfined` | some GUI syscalls aren't in Docker's default seccomp profile; see [Security note](#security-note) before using this |
 
 This image is built on `baseimage-selkies`, which supports a large set of additional environment variables (GPU acceleration, Wayland tuning, UI hardening, watermarking, etc.) — see the [baseimage-selkies README](https://github.com/linuxserver/docker-baseimage-selkies) for the full list. `TITLE` defaults to `GnuCash` in this image.
+
+## File uploads and downloads
+
+The Files panel in the Selkies sidebar uploads files into the container and downloads files out of it. This comes from the base image, not from anything in this repo, and it is controlled with environment variables:
+
+| Variable | Function |
+| :----: | --- |
+| `FILE_MANAGER_PATH` | The folder the Files panel works in. Uploads land here, and this folder (with its subfolders) is what the panel lists and lets you download. Defaults to `/config/Desktop`. It is created at startup if it doesn't exist. |
+| `SELKIES_FILE_TRANSFERS` | Which directions are allowed: `upload,download` (default), `upload`, `download`, or empty to turn transfers off. |
+
+Things to know:
+
+- There is **one** folder for both directions — Selkies has no separate upload and download locations.
+- Nothing outside that folder can be reached from the Files panel, and symlinks pointing out of it are refused. To make your books downloadable, point `FILE_MANAGER_PATH` at the folder you save them in (e.g. `/config/Documents`).
+- Keep the path under `/config`, or mount another volume and point the variable there, so the files survive container recreation.
 
 ## Security note
 
@@ -141,6 +159,7 @@ services:
       - TZ=America/Edmonton
       # - PASSWORD=...          # leave unset — Authelia is now the login, no need to stack a second prompt in front of it
       - RESTART_APP=true
+      # - FILE_MANAGER_PATH=/config/Documents   # optional, see "File uploads and downloads"
     volumes:
       - /srv/appdata/docker-gnucash:/config
     ports:
@@ -415,7 +434,28 @@ Visit `https://gnucash.yourdomain.tld`. You'll be redirected to `auth.yourdomain
 
 If you're doing this from the same phone that's showing the QR code, you obviously can't scan it with that phone's own camera. Look for a small "can't scan?" link or icon near the QR code that reveals a plain-text setup key instead, and use your authenticator app's "enter a setup key manually" option.
 
-### 5. Logging out
+### 5. Session timeouts and file downloads
+
+Authelia ends a session after 5 minutes of inactivity by default. The desktop stream is a single long-lived WebSocket, so while you work in GnuCash Authelia sees no new requests and may treat the session as idle. The stream itself keeps running, but the next ordinary request — typically a file download or upload from the Files panel — can be bounced to the Authelia login / one-time-code page. This only shows up when you connect through the proxy; direct LAN access to the container's ports skips Authelia entirely.
+
+Two ways to avoid it:
+
+- Tick **Remember me** when logging in, which exempts the session from the inactivity timeout.
+- Or raise the timeouts in `authelia/config/configuration.yml` and restart Authelia:
+
+```yaml
+session:
+  cookies:
+    - domain: 'yourdomain.tld'
+      authelia_url: 'https://auth.yourdomain.tld'
+      default_redirection_url: 'https://gnucash.yourdomain.tld'
+      inactivity: '1h'     # default 5m
+      expiration: '4h'     # default 1h
+```
+
+Longer timeouts mean an unattended browser stays logged in longer, so pick values you're comfortable with.
+
+### 6. Logging out
 
 GnuCash itself has no concept of the Authelia session sitting in front of it, so closing the tab doesn't log you out — the session cookie persists (by default, up to 1 hour, or 5 minutes of inactivity). To end it explicitly, visit `https://auth.yourdomain.tld/logout`, or use the account menu on the Authelia portal itself. Worth bookmarking that URL as a home-screen icon on mobile for a one-tap logout.
 
